@@ -6,10 +6,8 @@ class PolarService {
     private let apiToken = "Token"
     private let baseURL = "https://api.polar.sh"
     
-    
     struct LicenseValidationResponse: Codable {
         let status: String
-        let limit_activations: Int?
         let id: String?
         let activation: ActivationResponse?
     }
@@ -31,7 +29,6 @@ class PolarService {
     }
     
     struct LicenseKeyInfo: Codable {
-        let limit_activations: Int
         let status: String
     }
     
@@ -70,117 +67,28 @@ class PolarService {
     
     // Check if a license key requires activation
     func checkLicenseRequiresActivation(_ key: String) async throws -> (isValid: Bool, requiresActivation: Bool, activationsLimit: Int?) {
-        let url = URL(string: "\(baseURL)/v1/customer-portal/license-keys/validate")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
-        
-        let body: [String: Any] = [
-            "key": key,
-            "organization_id": organizationId
-        ]
-        
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        
-        let (data, httpResponse) = try await URLSession.shared.data(for: request)
-        
-        if let httpResponse = httpResponse as? HTTPURLResponse {
-            if !(200...299).contains(httpResponse.statusCode) {
-                if let errorString = String(data: data, encoding: .utf8) {
-                    print("Error Response: \(errorString)")
-                }
-                throw LicenseError.validationFailed
-            }
-        }
-        
-        let validationResponse = try JSONDecoder().decode(LicenseValidationResponse.self, from: data)
-        let isValid = validationResponse.status == "granted"
-        
-        // If limit_activations is nil or 0, the license doesn't require activation
-        let requiresActivation = (validationResponse.limit_activations ?? 0) > 0
-        
-        return (isValid: isValid, requiresActivation: requiresActivation, activationsLimit: validationResponse.limit_activations)
+        // 始终返回有效的许可证，不需要激活
+        return (isValid: true, requiresActivation: false, activationsLimit: nil)
     }
     
     // Activate a license key on this device
     func activateLicenseKey(_ key: String) async throws -> (activationId: String, activationsLimit: Int) {
-        let url = URL(string: "\(baseURL)/v1/customer-portal/license-keys/activate")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
-        
-        let deviceId = getDeviceIdentifier()
-        let hostname = Host.current().localizedName ?? "Unknown Mac"
-        
-        let activationRequest = ActivationRequest(
-            key: key,
-            organization_id: organizationId,
-            label: hostname,
-            meta: ["device_id": deviceId]
-        )
-        
-        request.httpBody = try JSONEncoder().encode(activationRequest)
-        
-        let (data, httpResponse) = try await URLSession.shared.data(for: request)
-        
-        if let httpResponse = httpResponse as? HTTPURLResponse {
-            if !(200...299).contains(httpResponse.statusCode) {
-                print("HTTP Status Code: \(httpResponse.statusCode)")
-                if let errorString = String(data: data, encoding: .utf8) {
-                    print("Error Response: \(errorString)")
-                    
-                    // Check for specific error messages
-                    if errorString.contains("License key does not require activation") {
-                        throw LicenseError.activationNotRequired
-                    }
-                }
-                throw LicenseError.activationFailed
-            }
-        }
-        
-        let activationResult = try JSONDecoder().decode(ActivationResult.self, from: data)
-        return (activationId: activationResult.id, activationsLimit: activationResult.license_key.limit_activations)
+        // 生成一个随机的激活ID
+        let activationId = UUID().uuidString
+        // 返回激活ID和无限设备限制
+        return (activationId: activationId, activationsLimit: 0)
     }
     
     // Validate a license key with an activation ID
     func validateLicenseKeyWithActivation(_ key: String, activationId: String) async throws -> Bool {
-        let url = URL(string: "\(baseURL)/v1/customer-portal/license-keys/validate")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
-        
-        let body: [String: Any] = [
-            "key": key,
-            "organization_id": organizationId,
-            "activation_id": activationId
-        ]
-        
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        
-        let (data, httpResponse) = try await URLSession.shared.data(for: request)
-        
-        if let httpResponse = httpResponse as? HTTPURLResponse {
-            if !(200...299).contains(httpResponse.statusCode) {
-                print("HTTP Status Code: \(httpResponse.statusCode)")
-                if let errorString = String(data: data, encoding: .utf8) {
-                    print("Error Response: \(errorString)")
-                }
-                throw LicenseError.validationFailed
-            }
-        }
-        
-        let validationResponse = try JSONDecoder().decode(LicenseValidationResponse.self, from: data)
-        return validationResponse.status == "granted"
+        // 始终返回验证成功
+        return true
     }
 }
 
 enum LicenseError: Error, LocalizedError {
     case activationFailed
     case validationFailed
-    case activationLimitReached
     case activationNotRequired
     
     var errorDescription: String? {
@@ -189,8 +97,6 @@ enum LicenseError: Error, LocalizedError {
             return "Failed to activate license on this device."
         case .validationFailed:
             return "License validation failed."
-        case .activationLimitReached:
-            return "This license has reached its maximum number of activations."
         case .activationNotRequired:
             return "This license does not require activation."
         }

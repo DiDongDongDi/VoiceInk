@@ -209,15 +209,9 @@ struct LicenseManagementView: View {
                 
                 Divider()
                 
-                if licenseViewModel.activationsLimit > 0 {
-                    Text("This license can be activated on up to \(licenseViewModel.activationsLimit) devices")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("You can use VoiceInk Pro on all your personal devices")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
+                Text("您可以在所有个人设备上使用 VoiceInk Pro")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
             .padding(32)
             .background(Color(.windowBackgroundColor).opacity(0.4))

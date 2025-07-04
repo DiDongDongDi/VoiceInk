@@ -7,9 +7,13 @@ enum AIProvider: String, CaseIterable {
     case deepSeek = "DeepSeek"
     case gemini = "Gemini"
     case anthropic = "Anthropic"
+    case openRouter = "OpenRouter"
     case mistral = "Mistral"
     case ollama = "Ollama"
+    case elevenLabs = "ElevenLabs"
+    case deepgram = "Deepgram"
     case custom = "Custom"
+    
     
     var baseURL: String {
         switch self {
@@ -23,12 +27,19 @@ enum AIProvider: String, CaseIterable {
             return "https://generativelanguage.googleapis.com/v1beta/models"
         case .anthropic:
             return "https://api.anthropic.com/v1/messages"
+        case .openRouter:
+            return "https://openrouter.ai/api/v1/chat/completions"
         case .mistral:
             return "https://api.mistral.ai/v1/chat/completions"
+        case .elevenLabs:
+            return "https://api.elevenlabs.io/v1/speech-to-text"
         case .ollama:
             return UserDefaults.standard.string(forKey: "ollamaBaseURL") ?? "http://localhost:11434"
+        case .deepgram:
+            return "https://api.deepgram.com/v1/listen"
         case .custom:
             return UserDefaults.standard.string(forKey: "customProviderBaseURL") ?? ""
+        
         }
     }
     
@@ -41,15 +52,21 @@ enum AIProvider: String, CaseIterable {
         case .deepSeek:
             return "deepseek-chat"
         case .gemini:
-            return "gemini-2.0-flash"
+            return "gemini-2.5-pro"
         case .anthropic:
-            return "claude-3-5-sonnet-20241022"
+            return "claude-sonnet-4-0"
         case .mistral:
             return "mistral-large-latest"
+        case .elevenLabs:
+            return "scribe_v1"
         case .ollama:
             return UserDefaults.standard.string(forKey: "ollamaSelectedModel") ?? "mistral"
+        case .deepgram:
+            return "whisper-1"
         case .custom:
             return UserDefaults.standard.string(forKey: "customProviderModel") ?? ""
+        case .openRouter:
+            return "openai/gpt-4o"
         }
     }
     
@@ -72,12 +89,15 @@ enum AIProvider: String, CaseIterable {
             ]
         case .gemini:
             return [
-                "gemini-2.5-flash-preview-04-17",
+                "gemini-2.5-pro",
+                "gemini-2.5-flash",
                 "gemini-2.0-flash",
                 "gemini-2.0-flash-lite"
             ]
         case .anthropic:
             return [
+                "claude-opus-4-0",
+                "claude-sonnet-4-0",
                 "claude-3-7-sonnet-latest",
                 "claude-3-5-haiku-latest",
                 "claude-3-5-sonnet-latest"
@@ -88,9 +108,15 @@ enum AIProvider: String, CaseIterable {
                 "mistral-small-latest",
                 "mistral-saba-latest"
             ]
+        case .elevenLabs:
+            return ["scribe_v1", "scribe_v1_experimental"]
         case .ollama:
             return []
+        case .deepgram:
+            return ["whisper-1"]
         case .custom:
+            return []
+        case .openRouter:
             return []
         }
     }
@@ -146,7 +172,9 @@ class AIService: ObservableObject {
     
     @Published private var selectedModels: [AIProvider: String] = [:]
     private let userDefaults = UserDefaults.standard
-    private let ollamaService = OllamaService()
+    private lazy var ollamaService = OllamaService()
+    
+    @Published private var openRouterModels: [String] = []
     
     var connectedProviders: [AIProvider] {
         AIProvider.allCases.filter { provider in
@@ -171,6 +199,8 @@ class AIService: ObservableObject {
     var availableModels: [String] {
         if selectedProvider == .ollama {
             return ollamaService.availableModels.map { $0.name }
+        } else if selectedProvider == .openRouter {
+            return openRouterModels
         }
         return selectedProvider.availableModels
     }
@@ -190,15 +220,10 @@ class AIService: ObservableObject {
             }
         } else {
             self.isAPIKeyValid = true
-            if selectedProvider == .ollama {
-                Task {
-                    await ollamaService.checkConnection()
-                    await ollamaService.refreshModels()
-                }
-            }
         }
         
         loadSavedModelSelections()
+        loadSavedOpenRouterModels()
     }
     
     private func loadSavedModelSelections() {
@@ -208,6 +233,16 @@ class AIService: ObservableObject {
                 selectedModels[provider] = savedModel
             }
         }
+    }
+    
+    private func loadSavedOpenRouterModels() {
+        if let savedModels = userDefaults.array(forKey: "openRouterModels") as? [String] {
+            openRouterModels = savedModels
+        }
+    }
+    
+    private func saveOpenRouterModels() {
+        userDefaults.set(openRouterModels, forKey: "openRouterModels")
     }
     
     func selectModel(_ model: String) {
@@ -257,6 +292,10 @@ class AIService: ObservableObject {
             verifyGeminiAPIKey(key, completion: completion)
         case .anthropic:
             verifyAnthropicAPIKey(key, completion: completion)
+        case .elevenLabs:
+            verifyElevenLabsAPIKey(key, completion: completion)
+        case .deepgram:
+            verifyDeepgramAPIKey(key, completion: completion)
         default:
             verifyOpenAICompatibleAPIKey(key, completion: completion)
         }
@@ -369,6 +408,49 @@ class AIService: ObservableObject {
         }.resume()
     }
     
+    private func verifyElevenLabsAPIKey(_ key: String, completion: @escaping (Bool) -> Void) {
+        let url = URL(string: "https://api.elevenlabs.io/v1/user")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.addValue(key, forHTTPHeaderField: "xi-api-key")
+        
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            if let error = error {
+                self.logger.error("ElevenLabs API key verification failed: \(error.localizedDescription)")
+                completion(false)
+                return
+            }
+            
+            if let httpResponse = response as? HTTPURLResponse {
+                completion(httpResponse.statusCode == 200)
+            } else {
+                completion(false)
+            }
+        }.resume()
+    }
+    
+    private func verifyDeepgramAPIKey(_ key: String, completion: @escaping (Bool) -> Void) {
+        let url = URL(string: "https://api.deepgram.com/v1/auth/token")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.addValue("Token \(key)", forHTTPHeaderField: "Authorization")
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                self.logger.error("Deepgram API key verification failed: \(error.localizedDescription)")
+                completion(false)
+                return
+            }
+            
+            if let httpResponse = response as? HTTPURLResponse {
+                completion(httpResponse.statusCode == 200)
+            } else {
+                completion(false)
+            }
+        }.resume()
+    }
+    
     func clearAPIKey() {
         guard selectedProvider.requiresAPIKey else { return }
         
@@ -414,8 +496,61 @@ class AIService: ObservableObject {
         ollamaService.selectedModel = modelName
         userDefaults.set(modelName, forKey: "ollamaSelectedModel")
     }
+    
+    func fetchOpenRouterModels() async {
+        let url = URL(string: "https://openrouter.ai/api/v1/models")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                logger.error("Failed to fetch OpenRouter models: Invalid HTTP response")
+                await MainActor.run { 
+                    self.openRouterModels = []
+                    self.saveOpenRouterModels()
+                    self.objectWillChange.send()
+                }
+                return
+            }
+            
+            guard let jsonResponse = try? JSONSerialization.jsonObject(with: data) as? [String: Any], 
+                  let dataArray = jsonResponse["data"] as? [[String: Any]] else {
+                logger.error("Failed to parse OpenRouter models JSON")
+                await MainActor.run { 
+                    self.openRouterModels = []
+                    self.saveOpenRouterModels()
+                    self.objectWillChange.send()
+                }
+                return
+            }
+            
+            let models = dataArray.compactMap { $0["id"] as? String }
+            await MainActor.run { 
+                self.openRouterModels = models.sorted()
+                self.saveOpenRouterModels() // Save to UserDefaults
+                if self.selectedProvider == .openRouter && self.currentModel == self.selectedProvider.defaultModel && !models.isEmpty {
+                    self.selectModel(models.sorted().first!)
+                }
+                self.objectWillChange.send()
+            }
+            logger.info("Successfully fetched \(models.count) OpenRouter models.")
+            
+        } catch {
+            logger.error("Error fetching OpenRouter models: \(error.localizedDescription)")
+            await MainActor.run { 
+                self.openRouterModels = []
+                self.saveOpenRouterModels()
+                self.objectWillChange.send()
+            }
+        }
+
+    }
 }
 
 extension Notification.Name {
     static let aiProviderKeyChanged = Notification.Name("aiProviderKeyChanged")
 } 
+

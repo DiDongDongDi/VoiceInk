@@ -12,6 +12,8 @@ class Recorder: ObservableObject {
     private var isReconfiguring = false
     private let mediaController = MediaController.shared
     @Published var audioMeter = AudioMeter(averagePower: 0, peakPower: 0)
+    private var audioLevelCheckTask: Task<Void, Never>?
+    private var hasDetectedAudioInCurrentSession = false
     
     enum RecorderError: Error {
         case couldNotStartRecording
@@ -36,7 +38,6 @@ class Recorder: ObservableObject {
         if recorder != nil {
             let currentURL = recorder?.url
             stopRecording()
-            try? await Task.sleep(nanoseconds: 100_000_000)
             
             if let url = currentURL {
                 do {
@@ -50,17 +51,28 @@ class Recorder: ObservableObject {
     }
     
     private func configureAudioSession(with deviceID: AudioDeviceID) async throws {
-        do {
-            _ = try AudioDeviceConfiguration.configureAudioSession(with: deviceID)
-            try AudioDeviceConfiguration.setDefaultInputDevice(deviceID)
-        } catch {
-            logger.error("❌ Failed to configure audio session: \(error.localizedDescription)")
-            throw error
-        }
+        try AudioDeviceConfiguration.setDefaultInputDevice(deviceID)
     }
     
     func startRecording(toOutputFile url: URL) async throws {
         deviceManager.isRecordingActive = true
+        
+        let currentDeviceID = deviceManager.getCurrentDevice()
+        let lastDeviceID = UserDefaults.standard.string(forKey: "lastUsedMicrophoneDeviceID")
+        
+        if String(currentDeviceID) != lastDeviceID {
+            if let deviceName = deviceManager.availableDevices.first(where: { $0.id == currentDeviceID })?.name {
+                await MainActor.run {
+                    NotificationManager.shared.showNotification(
+                        title: "Using: \(deviceName)",
+                        type: .info
+                    )
+                }
+            }
+        }
+        UserDefaults.standard.set(String(currentDeviceID), forKey: "lastUsedMicrophoneDeviceID")
+        
+        hasDetectedAudioInCurrentSession = false
         
         Task { 
             await mediaController.muteSystemAudio()
@@ -94,10 +106,33 @@ class Recorder: ObservableObject {
                 throw RecorderError.couldNotStartRecording
             }
             
+            audioLevelCheckTask?.cancel()
+            
             Task {
                 while recorder != nil {
                     updateAudioMeter()
                     try? await Task.sleep(nanoseconds: 33_000_000)
+                }
+            }
+            
+            audioLevelCheckTask = Task {
+                let notificationChecks: [TimeInterval] = [2.0, 8.0]
+
+                for delay in notificationChecks {
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+
+                    if Task.isCancelled { return }
+
+                    if self.hasDetectedAudioInCurrentSession {
+                        return
+                    }
+
+                    await MainActor.run {
+                        NotificationManager.shared.showNotification(
+                            title: "No Audio Detected",
+                            type: .warning
+                        )
+                    }
                 }
             }
             
@@ -109,6 +144,7 @@ class Recorder: ObservableObject {
     }
     
     func stopRecording() {
+        audioLevelCheckTask?.cancel()
         recorder?.stop()
         recorder = nil
         audioMeter = AudioMeter(averagePower: 0, peakPower: 0)
@@ -146,7 +182,13 @@ class Recorder: ObservableObject {
             normalizedPeak = (peakPower - minVisibleDb) / (maxVisibleDb - minVisibleDb)
         }
         
-        audioMeter = AudioMeter(averagePower: Double(normalizedAverage), peakPower: Double(normalizedPeak))
+        let newAudioMeter = AudioMeter(averagePower: Double(normalizedAverage), peakPower: Double(normalizedPeak))
+
+        if !hasDetectedAudioInCurrentSession && newAudioMeter.averagePower > 0.01 {
+            hasDetectedAudioInCurrentSession = true
+        }
+        
+        audioMeter = newAudioMeter
     }
     
     deinit {

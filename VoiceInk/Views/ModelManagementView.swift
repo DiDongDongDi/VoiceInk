@@ -3,12 +3,19 @@ import SwiftData
 
 struct ModelManagementView: View {
     @ObservedObject var whisperState: WhisperState
-    @State private var modelToDelete: WhisperModel?
+    @State private var customModelToEdit: CustomCloudModel?
     @StateObject private var aiService = AIService()
+    @StateObject private var customModelManager = CustomModelManager.shared
     @EnvironmentObject private var enhancementService: AIEnhancementService
     @Environment(\.modelContext) private var modelContext
     @StateObject private var whisperPrompt = WhisperPrompt()
-    
+
+    // State for the unified alert
+    @State private var isShowingDeleteAlert = false
+    @State private var alertTitle = ""
+    @State private var alertMessage = ""
+    @State private var deleteActionClosure: () -> Void = {}
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
@@ -20,15 +27,11 @@ struct ModelManagementView: View {
         }
         .frame(minWidth: 600, minHeight: 500)
         .background(Color(NSColor.controlBackgroundColor))
-        .alert(item: $modelToDelete) { model in
+        .alert(isPresented: $isShowingDeleteAlert) {
             Alert(
-                title: Text("Delete Model"),
-                message: Text("Are you sure you want to delete the model '\(model.name)'?"),
-                primaryButton: .destructive(Text("Delete")) {
-                    Task {
-                        await whisperState.deleteModel(model)
-                    }
-                },
+                title: Text(alertTitle),
+                message: Text(alertMessage),
+                primaryButton: .destructive(Text("Delete"), action: deleteActionClosure),
                 secondaryButton: .cancel()
             )
         }
@@ -39,15 +42,13 @@ struct ModelManagementView: View {
             Text("Default Model")
                 .font(.headline)
                 .foregroundColor(.secondary)
-            Text(whisperState.currentModel.flatMap { model in
-                PredefinedModels.models.first { $0.name == model.name }?.displayName
-            } ?? "No model selected")
+            Text(whisperState.currentTranscriptionModel?.displayName ?? "No model selected")
                 .font(.title2)
                 .fontWeight(.bold)
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.windowBackgroundColor).opacity(0.4))
+        .background(CardBackground(isSelected: false))
         .cornerRadius(10)
     }
     
@@ -62,7 +63,7 @@ struct ModelManagementView: View {
                     .font(.title3)
                     .fontWeight(.semibold)
                 
-                Text("(\(whisperState.predefinedModels.count))")
+                Text("(\(whisperState.allAvailableModels.count))")
                     .foregroundColor(.secondary)
                     .font(.subheadline)
                 
@@ -70,31 +71,59 @@ struct ModelManagementView: View {
             }
             
             VStack(spacing: 12) {
-                ForEach(whisperState.predefinedModels) { model in
+                ForEach(whisperState.allAvailableModels, id: \.id) { model in
                     ModelCardRowView(
                         model: model,
                         isDownloaded: whisperState.availableModels.contains { $0.name == model.name },
-                        isCurrent: whisperState.currentModel?.name == model.name,
+                        isCurrent: whisperState.currentTranscriptionModel?.name == model.name,
                         downloadProgress: whisperState.downloadProgress,
                         modelURL: whisperState.availableModels.first { $0.name == model.name }?.url,
                         deleteAction: {
-                            if let downloadedModel = whisperState.availableModels.first(where: { $0.name == model.name }) {
-                                modelToDelete = downloadedModel
+                            if let customModel = model as? CustomCloudModel {
+                                alertTitle = "Delete Custom Model"
+                                alertMessage = "Are you sure you want to delete the custom model '\(customModel.displayName)'?"
+                                deleteActionClosure = {
+                                    customModelManager.removeCustomModel(withId: customModel.id)
+                                    whisperState.refreshAllAvailableModels()
+                                }
+                                isShowingDeleteAlert = true
+                            } else if let downloadedModel = whisperState.availableModels.first(where: { $0.name == model.name }) {
+                                alertTitle = "Delete Model"
+                                alertMessage = "Are you sure you want to delete the model '\(downloadedModel.name)'?"
+                                deleteActionClosure = {
+                                    Task {
+                                        await whisperState.deleteModel(downloadedModel)
+                                    }
+                                }
+                                isShowingDeleteAlert = true
                             }
                         },
                         setDefaultAction: {
-                            if let downloadedModel = whisperState.availableModels.first(where: { $0.name == model.name }) {
-                                Task {
-                                    await whisperState.setDefaultModel(downloadedModel)
-                                }
+                            Task {
+                                await whisperState.setDefaultTranscriptionModel(model)
                             }
                         },
                         downloadAction: {
-                            Task {
-                                await whisperState.downloadModel(model)
+                            if let localModel = model as? LocalModel {
+                                Task {
+                                    await whisperState.downloadModel(localModel)
+                                }
                             }
-                        }
+                        },
+                        editAction: model.provider == .custom ? { customModel in
+                            customModelToEdit = customModel
+                        } : nil
                     )
+                }
+                
+                // Add Custom Model Card at the bottom
+                AddCustomModelCardView(
+                    customModelManager: customModelManager,
+                    editingModel: customModelToEdit
+                ) {
+                    // Refresh the models when a new custom model is added
+                    whisperState.refreshAllAvailableModels()
+                    customModelToEdit = nil // Clear editing state
                 }
             }
         }

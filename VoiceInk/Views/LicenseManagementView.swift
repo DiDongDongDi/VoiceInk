@@ -28,14 +28,7 @@ struct LicenseManagementView: View {
     private var heroSection: some View {
         VStack(spacing: 24) {
             // App Icon
-            if let appIcon = NSImage(named: "AppIcon") {
-                Image(nsImage: appIcon)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 96, height: 96)
-                    .cornerRadius(24)
-                    .shadow(color: .black.opacity(0.1), radius: 20, x: 0, y: 10)
-            }
+            AppIconView()
             
             // Title Section
             VStack(spacing: 16) {
@@ -57,7 +50,7 @@ struct LicenseManagementView: View {
                 
                 Text(licenseViewModel.licenseState == .licensed ? 
                      "Thank you for supporting VoiceInk" :
-                     "Transform your voice into text with advanced features")
+                     "Transform your voice into text with instantly with AI")
                     .font(.title3)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -140,13 +133,12 @@ struct LicenseManagementView: View {
                     featureItem(icon: "bubble.left.and.bubble.right.fill", title: "Priority Support", color: .purple)
                     featureItem(icon: "infinity.circle.fill", title: "Lifetime Access", color: .blue)
                     featureItem(icon: "arrow.up.circle.fill", title: "Free Updates", color: .green)
-                    featureItem(icon: "macbook.and.iphone", title: "All Devices", color: .orange)
+                    featureItem(icon: "macbook.and.iphone", title: "Multiple Devices", color: .orange)
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
             }
             .padding(32)
-            .background(Color(.windowBackgroundColor).opacity(0.4))
-            .cornerRadius(16)
+            .background(CardBackground(isSelected: false))
             .shadow(color: .black.opacity(0.05), radius: 10)
 
             // License Activation
@@ -182,8 +174,7 @@ struct LicenseManagementView: View {
                 }
             }
             .padding(32)
-            .background(Color(.windowBackgroundColor).opacity(0.4))
-            .cornerRadius(16)
+            .background(CardBackground(isSelected: false))
             .shadow(color: .black.opacity(0.05), radius: 10)
         }
     }
@@ -214,8 +205,7 @@ struct LicenseManagementView: View {
                     .foregroundStyle(.secondary)
             }
             .padding(32)
-            .background(Color(.windowBackgroundColor).opacity(0.4))
-            .cornerRadius(16)
+            .background(CardBackground(isSelected: false))
             .shadow(color: .black.opacity(0.05), radius: 10)
             
             // Deactivation Card
@@ -233,8 +223,7 @@ struct LicenseManagementView: View {
                 .buttonStyle(.bordered)
             }
             .padding(32)
-            .background(Color(.windowBackgroundColor).opacity(0.4))
-            .cornerRadius(16)
+            .background(CardBackground(isSelected: false))
             .shadow(color: .black.opacity(0.05), radius: 10)
         }
     }

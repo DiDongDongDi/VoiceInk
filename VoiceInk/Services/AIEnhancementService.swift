@@ -1,35 +1,22 @@
 import Foundation
-import os
 import SwiftData
 import AppKit
 
-enum EnhancementMode {
+enum EnhancementPrompt {
     case transcriptionEnhancement
     case aiAssistant
 }
 
 class AIEnhancementService: ObservableObject {
-    private let logger = Logger(
-        subsystem: "com.prakashjoshipax.VoiceInk",
-        category: "aienhancement"
-    )
-    
     @Published var isEnhancementEnabled: Bool {
         didSet {
             UserDefaults.standard.set(isEnhancementEnabled, forKey: "isAIEnhancementEnabled")
             if isEnhancementEnabled && selectedPromptId == nil {
                 selectedPromptId = customPrompts.first?.id
             }
-            
-            currentCaptureTask?.cancel()
-            
-            if isEnhancementEnabled && useScreenCaptureContext {
-                currentCaptureTask = Task {
-                    await captureScreenContext()
-                }
-            }
         }
-    }        
+    }
+    
     @Published var useClipboardContext: Bool {
         didSet {
             UserDefaults.standard.set(useClipboardContext, forKey: "useClipboardContext")
@@ -42,15 +29,9 @@ class AIEnhancementService: ObservableObject {
         }
     }
     
-    @Published var assistantTriggerWord: String {
-        didSet {
-            UserDefaults.standard.set(assistantTriggerWord, forKey: "assistantTriggerWord")
-        }
-    }
-    
     @Published var customPrompts: [CustomPrompt] {
         didSet {
-            if let encoded = try? JSONEncoder().encode(customPrompts.filter { !$0.isPredefined }) {
+            if let encoded = try? JSONEncoder().encode(customPrompts) {
                 UserDefaults.standard.set(encoded, forKey: "customPrompts")
             }
         }
@@ -67,14 +48,13 @@ class AIEnhancementService: ObservableObject {
     }
     
     var allPrompts: [CustomPrompt] {
-        PredefinedPrompts.createDefaultPrompts() + customPrompts.filter { !$0.isPredefined }
+        return customPrompts
     }
     
     private let aiService: AIService
     private let screenCaptureService: ScreenCaptureService
-    private var currentCaptureTask: Task<Void, Never>?
     private let maxRetries = 3
-    private let baseTimeout: TimeInterval = 4
+    private let baseTimeout: TimeInterval = 10
     private let rateLimitInterval: TimeInterval = 1.0
     private var lastRequestTime: Date?
     private let modelContext: ModelContext
@@ -87,14 +67,8 @@ class AIEnhancementService: ObservableObject {
         self.isEnhancementEnabled = UserDefaults.standard.bool(forKey: "isAIEnhancementEnabled")
         self.useClipboardContext = UserDefaults.standard.bool(forKey: "useClipboardContext")
         self.useScreenCaptureContext = UserDefaults.standard.bool(forKey: "useScreenCaptureContext")
-        self.assistantTriggerWord = UserDefaults.standard.string(forKey: "assistantTriggerWord") ?? "hey"
         
-        if let savedPromptsData = UserDefaults.standard.data(forKey: "customPrompts"),
-           let decodedPrompts = try? JSONDecoder().decode([CustomPrompt].self, from: savedPromptsData) {
-            self.customPrompts = decodedPrompts
-        } else {
-            self.customPrompts = []
-        }
+        self.customPrompts = PromptMigrationService.migratePromptsIfNeeded()
         
         if let savedPromptId = UserDefaults.standard.string(forKey: "selectedPromptId") {
             self.selectedPromptId = UUID(uuidString: savedPromptId)
@@ -110,6 +84,8 @@ class AIEnhancementService: ObservableObject {
             name: .aiProviderKeyChanged,
             object: nil
         )
+        
+        initializePredefinedPrompts()
     }
     
     deinit {
@@ -123,6 +99,10 @@ class AIEnhancementService: ObservableObject {
                 self.isEnhancementEnabled = false
             }
         }
+    }
+    
+    func getAIService() -> AIService? {
+        return aiService
     }
     
     var isConfigured: Bool {
@@ -139,11 +119,18 @@ class AIEnhancementService: ObservableObject {
         lastRequestTime = Date()
     }
     
-    private func determineMode(text: String) -> EnhancementMode {
-        text.lowercased().hasPrefix(assistantTriggerWord.lowercased()) ? .aiAssistant : .transcriptionEnhancement
-    }
-    
-    private func getSystemMessage(for mode: EnhancementMode) -> String {
+    private func getSystemMessage(for mode: EnhancementPrompt) -> String {
+        let selectedText = SelectedTextService.fetchSelectedText()
+        
+        if let activePrompt = activePrompt,
+           activePrompt.id == PredefinedPrompts.assistantPromptId,
+           let selectedText = selectedText, !selectedText.isEmpty {
+            
+            let selectedTextContext = "\n\nSelected Text: \(selectedText)"
+            let contextSection = "\n\n\(AIPrompts.contextInstructions)\n\n<CONTEXT_INFORMATION>\(selectedTextContext)\n</CONTEXT_INFORMATION>"
+            return activePrompt.promptText + contextSection
+        }
+        
         let clipboardContext = if useClipboardContext,
                               let clipboardText = NSPasteboard.general.string(forType: .string),
                               !clipboardText.isEmpty {
@@ -166,38 +153,30 @@ class AIEnhancementService: ObservableObject {
             ""
         }
         
-        switch mode {
-        case .transcriptionEnhancement:
-            if let activePrompt = activePrompt,
-               activePrompt.id == PredefinedPrompts.assistantPromptId {
-                return AIPrompts.assistantMode + contextSection
-            }
-            
-            var systemMessage = String(format: AIPrompts.customPromptTemplate, activePrompt!.promptText)
-            systemMessage += contextSection
-            return systemMessage
-
-        case .aiAssistant:
+        guard let activePrompt = activePrompt else {
             return AIPrompts.assistantMode + contextSection
         }
+        
+        if activePrompt.id == PredefinedPrompts.assistantPromptId {
+            return activePrompt.promptText + contextSection
+        }
+        
+        var systemMessage = String(format: AIPrompts.customPromptTemplate, activePrompt.promptText)
+        systemMessage += contextSection
+        return systemMessage
     }
     
-    private func makeRequest(text: String, retryCount: Int = 0) async throws -> String {
+    private func makeRequest(text: String, mode: EnhancementPrompt, retryCount: Int = 0) async throws -> String {
         guard isConfigured else {
-            logger.error("AI Enhancement: API not configured")
             throw EnhancementError.notConfigured
         }
         
         guard !text.isEmpty else {
-            logger.error("AI Enhancement: Empty text received")
             throw EnhancementError.emptyText
         }
         
         let formattedText = "\n<TRANSCRIPT>\n\(text)\n</TRANSCRIPT>"
-        let mode = determineMode(text: text)
         let systemMessage = getSystemMessage(for: mode)
-        
-        logger.notice("🛰️ Sending to AI provider: \(self.aiService.selectedProvider.rawValue)\nSystem Message: \(systemMessage)\nUser Message: \(formattedText)")
         
         if aiService.selectedProvider == .ollama {
             do {
@@ -288,7 +267,7 @@ class AIEnhancementService: ObservableObject {
             } catch {
                 if retryCount < maxRetries {
                     try await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(retryCount)) * 1_000_000_000))
-                    return try await makeRequest(text: text, retryCount: retryCount + 1)
+                    return try await makeRequest(text: text, mode: mode, retryCount: retryCount + 1)
                 }
                 throw EnhancementError.networkError
             }
@@ -343,7 +322,7 @@ class AIEnhancementService: ObservableObject {
             } catch {
                 if retryCount < maxRetries {
                     try await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(retryCount)) * 1_000_000_000))
-                    return try await makeRequest(text: text, retryCount: retryCount + 1)
+                    return try await makeRequest(text: text, mode: mode, retryCount: retryCount + 1)
                 }
                 throw EnhancementError.networkError
             }
@@ -406,7 +385,7 @@ class AIEnhancementService: ObservableObject {
             } catch {
                 if retryCount < maxRetries {
                     try await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(retryCount)) * 1_000_000_000))
-                    return try await makeRequest(text: text, retryCount: retryCount + 1)
+                    return try await makeRequest(text: text, mode: mode, retryCount: retryCount + 1)
                 }
                 throw EnhancementError.networkError
             }
@@ -414,24 +393,26 @@ class AIEnhancementService: ObservableObject {
     }
     
     func enhance(_ text: String) async throws -> String {
-        logger.notice("🚀 Starting AI enhancement for text (\(text.count) characters)")
+        let enhancementPrompt: EnhancementPrompt = .transcriptionEnhancement
+        
         var retryCount = 0
         while retryCount < maxRetries {
             do {
-                let result = try await makeRequest(text: text, retryCount: retryCount)
-                logger.notice("✅ AI enhancement completed successfully (\(result.count) characters)")
+                let result = try await makeRequest(text: text, mode: enhancementPrompt, retryCount: retryCount)
                 return result
-            } catch EnhancementError.rateLimitExceeded where retryCount < maxRetries - 1 {
-                logger.notice("⚠️ Rate limit exceeded, retrying AI enhancement (attempt \(retryCount + 1) of \(self.maxRetries))")
-                retryCount += 1
-                try await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(retryCount)) * 1_000_000_000))
-                continue
+            } catch let error as EnhancementError {
+                if shouldRetry(error: error, retryCount: retryCount) {
+                    retryCount += 1
+                    let delaySeconds = getRetryDelay(for: retryCount)
+                    try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+                    continue
+                } else {
+                    throw error
+                }
             } catch {
-                logger.notice("❌ AI enhancement failed: \(error.localizedDescription)")
                 throw error
             }
         }
-        logger.notice("❌ AI enhancement failed: maximum retries exceeded")
         throw EnhancementError.maxRetriesExceeded
     }
     
@@ -445,8 +426,8 @@ class AIEnhancementService: ObservableObject {
         }
     }
     
-    func addPrompt(title: String, promptText: String, icon: PromptIcon = .documentFill, description: String? = nil) {
-        let newPrompt = CustomPrompt(title: title, promptText: promptText, icon: icon, description: description, isPredefined: false)
+    func addPrompt(title: String, promptText: String, icon: PromptIcon = .documentFill, description: String? = nil, triggerWords: [String] = []) {
+        let newPrompt = CustomPrompt(title: title, promptText: promptText, icon: icon, description: description, isPredefined: false, triggerWords: triggerWords)
         customPrompts.append(newPrompt)
         if customPrompts.count == 1 {
             selectedPromptId = newPrompt.id
@@ -454,16 +435,12 @@ class AIEnhancementService: ObservableObject {
     }
     
     func updatePrompt(_ prompt: CustomPrompt) {
-        if prompt.isPredefined { return }
-        
         if let index = customPrompts.firstIndex(where: { $0.id == prompt.id }) {
             customPrompts[index] = prompt
         }
     }
     
     func deletePrompt(_ prompt: CustomPrompt) {
-        if prompt.isPredefined { return }
-        
         customPrompts.removeAll { $0.id == prompt.id }
         if selectedPromptId == prompt.id {
             selectedPromptId = allPrompts.first?.id
@@ -472,6 +449,44 @@ class AIEnhancementService: ObservableObject {
     
     func setActivePrompt(_ prompt: CustomPrompt) {
         selectedPromptId = prompt.id
+    }
+    
+    private func shouldRetry(error: EnhancementError, retryCount: Int) -> Bool {
+        guard retryCount < maxRetries - 1 else { return false }
+        
+        switch error {
+        case .rateLimitExceeded, .serverError:
+            return true
+        default:
+            return false
+        }
+    }
+    
+    private func getRetryDelay(for retryCount: Int) -> TimeInterval {
+        return retryCount == 1 ? 1.0 : 2.0
+    }
+    
+    private func initializePredefinedPrompts() {
+        let predefinedTemplates = PredefinedPrompts.createDefaultPrompts()
+        
+        for template in predefinedTemplates {
+            if let existingIndex = customPrompts.firstIndex(where: { $0.id == template.id }) {
+                var updatedPrompt = customPrompts[existingIndex]
+                updatedPrompt = CustomPrompt(
+                    id: updatedPrompt.id,
+                    title: template.title,
+                    promptText: template.promptText,
+                    isActive: updatedPrompt.isActive,
+                    icon: template.icon,
+                    description: template.description,
+                    isPredefined: true,
+                    triggerWords: updatedPrompt.triggerWords
+                )
+                customPrompts[existingIndex] = updatedPrompt
+            } else {
+                customPrompts.append(template)
+            }
+        }
     }
 }
 
@@ -486,6 +501,31 @@ enum EnhancementError: Error {
     case apiError
     case networkError
     case maxRetriesExceeded
-} 
+}
 
-
+extension EnhancementError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .notConfigured:
+            return "AI provider not configured. Please check your API key."
+        case .emptyText:
+            return "No text to enhance."
+        case .invalidResponse:
+            return "Invalid response from AI provider."
+        case .enhancementFailed:
+            return "AI enhancement failed to process the text."
+        case .authenticationFailed:
+            return "API key is invalid. Please check your credentials."
+        case .rateLimitExceeded:
+            return "Rate limit exceeded. Please try again later."
+        case .serverError:
+            return "AI provider server error. Please try again."
+        case .apiError:
+            return "AI provider API error. Please try again."
+        case .networkError:
+            return "Network connection failed. Check your internet."
+        case .maxRetriesExceeded:
+            return "Enhancement failed after multiple attempts."
+        }
+    }
+}

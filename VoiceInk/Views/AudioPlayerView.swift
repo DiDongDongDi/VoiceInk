@@ -275,6 +275,19 @@ struct AudioPlayerView: View {
                 )
                 
                 HStack(spacing: 20) {
+                    Button(action: showInFinder) {
+                        Circle()
+                            .fill(Color.orange.opacity(0.1))
+                            .frame(width: 44, height: 44)
+                            .overlay(
+                                Image(systemName: "folder")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(Color.orange)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Show in Finder")
+                    
                     Button(action: {
                         if playerManager.isPlaying {
                             playerManager.pause()
@@ -387,8 +400,12 @@ struct AudioPlayerView: View {
         return String(format: "%d:%02d", minutes, seconds)
     }
     
+    private func showInFinder() {
+        NSWorkspace.shared.selectFile(url.path, inFileViewerRootedAtPath: url.deletingLastPathComponent().path)
+    }
+    
     private func retranscribeAudio() {
-        guard let currentModel = whisperState.currentModel else {
+        guard let currentTranscriptionModel = whisperState.currentTranscriptionModel else {
             errorMessage = "No transcription model selected"
             showRetranscribeError = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
@@ -401,7 +418,7 @@ struct AudioPlayerView: View {
         
         Task {
             do {
-                let _ = try await transcriptionService.retranscribeAudio(from: url, using: currentModel)
+                let _ = try await transcriptionService.retranscribeAudio(from: url, using: currentTranscriptionModel)
                 await MainActor.run {
                     isRetranscribing = false
                     showRetranscribeSuccess = true

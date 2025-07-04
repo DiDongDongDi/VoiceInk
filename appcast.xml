@@ -3,21 +3,29 @@
     <channel>
         <title>VoiceInk Releases</title>
         <item>
-            <title>1.28</title>
-            <pubDate>Sat, 15 May 2025 12:00:00 +0545</pubDate>
-            <sparkle:version>128</sparkle:version>
-            <sparkle:shortVersionString>1.28</sparkle:shortVersionString>
+            <title>1.38</title>
+            <pubDate>Sat, 4 June 2025 12:20:00 +0545</pubDate>
+            <sparkle:version>138</sparkle:version>
+            <sparkle:shortVersionString>1.38</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <description><![CDATA[
-                    <h3>What's New in Version 1.28 🚀⚡</h3>
+                <h3>What's New in Version 1.38 🚀⚡</h3>
                             <ul>
-                              <li>🔄 Added option to specify output format for the transcription(useful for languages written in different styles like simplified & traditional language</li>
-                              <li>🐞 Fixed Dock Icon reappearing issue</li>
-                              <li>🖼️ Updated the app icon</li>
-                              <li>✨ Minor improvements</li>
-                            </ul>
+                                <li>🔧 Fixed fallback window issue</li>
+                                <li>📋 Added toggle for fallback window in the settings</li>
+                            </ul> 
+                    <h3>What's New in Version 1.37 🚀⚡</h3>
+                            <ul>
+                                <li>🔧 Fixed text Hallucination Issues with Large models</li>
+                                <li>📚 Unified Hotkey for both custom shortcuts & Push-to-talk.</li>
+                                <li>📋 Added a fallback window to handle paste fails</li>
+                                <li>📹 Added support for Video files for file based transcription</li>
+                                <li>💡 Fixed Mic Blinking Issues</li>
+                                <li>🔌 Fixed openRouter model issues with Power Mode</li>
+                                <li>🔇 Disabled audio tagging with eleven labs scribe</li>
+                          </ul> 
             ]]></description>
-           <enclosure url="https://github.com/Beingpax/VoiceInk/releases/download/v1.28/VoiceInk.dmg" length="7287500" type="application/octet-stream" sparkle:edSignature="1sVoDx6izVV2MuDI4sPRPlqlcEyK3h9HJQtkuK2vJPWYudlD3UX/yKrVoUuNR88/zOqya1Xl7Q4CY64wnsGgAg=="/>
+           <enclosure url="https://github.com/Beingpax/VoiceInk/releases/download/v1.38/VoiceInk.dmg" length="7525541" type="application/octet-stream" sparkle:edSignature="nkQboyGzMfa4Kc/Nf6c89mXWsO/hsNsFw+ZPy6b78p3MdDWAHfnjddVdBeygzARud+B/lHlp3eAp7if1ftbeAw=="/>
         </item>
     </channel>
 </rss>

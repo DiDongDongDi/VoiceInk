@@ -32,7 +32,7 @@ actor WhisperContext {
         }
     }
 
-    func fullTranscribe(samples: [Float]) {
+    func fullTranscribe(samples: [Float]) async {
         guard let context = context else { return }
         
         // Leave 2 processors free (i.e. the high-efficiency cores).
@@ -75,16 +75,36 @@ actor WhisperContext {
         params.single_segment   = false
 
         whisper_reset_timings(context)
-        logger.notice("⚙️ Starting whisper transcription")
-        samples.withUnsafeBufferPointer { samples in
-            if (whisper_full(context, params, samples.baseAddress, Int32(samples.count)) != 0) {
-                logger.error("❌ Failed to run whisper model")
+        logger.notice("⚙️ Starting whisper transcription with VAD: \(params.vad ? "ENABLED" : "DISABLED")")
+        
+        if let vadModelPath = await VADModelManager.shared.getModelPath() {
+            logger.notice("🎤 VAD is ENABLED - Successfully retrieved VAD model path: \(vadModelPath)")
+            params.vad = true
+            params.vad_model_path = (vadModelPath as NSString).utf8String
+            
+            var vadParams = whisper_vad_default_params()
+            vadParams.min_speech_duration_ms = 500
+            vadParams.min_silence_duration_ms = 500
+            vadParams.samples_overlap = 0.1
+            params.vad_params = vadParams
+            
+            logger.notice("🎤 VAD configured with parameters: min_speech=500ms, min_silence=500ms, overlap=10%")
+            logger.notice("🎤 VAD will be used for voice activity detection during transcription")
+        } else {
+            logger.notice("🎤 VAD is DISABLED - VAD model path not found, proceeding without VAD")
+            params.vad = false
+            logger.notice("🎤 Transcription will process entire audio without voice activity detection")
+        }
+        
+        samples.withUnsafeBufferPointer { samplesBuffer in
+            if whisper_full(context, params, samplesBuffer.baseAddress, Int32(samplesBuffer.count)) != 0 {
+                self.logger.error("Failed to run whisper_full")
             } else {
-                // Print detected language info before timings
-                let langId = whisper_full_lang_id(context)
-                let detectedLang = String(cString: whisper_lang_str(langId))
-                logger.notice("✅ Transcription completed - Language: \(detectedLang)")
-                
+                if params.vad {
+                    self.logger.notice("✅ Whisper transcription completed successfully with VAD processing")
+                } else {
+                    self.logger.notice("✅ Whisper transcription completed successfully without VAD")
+                }
             }
         }
         
@@ -140,7 +160,7 @@ actor WhisperContext {
 
     func setPrompt(_ prompt: String?) {
         self.prompt = prompt
-        logger.debug("💬 Prompt set: \(prompt ?? "none")")
+        logger.notice("💬 Prompt set: \(prompt ?? "none")")
     }
 }
 

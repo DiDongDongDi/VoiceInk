@@ -5,7 +5,6 @@ import KeyboardShortcuts
 // ViewType enum with all cases
 enum ViewType: String, CaseIterable {
     case metrics = "Dashboard"
-    case record = "Record Audio"
     case transcribeAudio = "Transcribe Audio"
     case history = "History"
     case models = "AI Models"
@@ -20,7 +19,6 @@ enum ViewType: String, CaseIterable {
     var icon: String {
         switch self {
         case .metrics: return "gauge.medium"
-        case .record: return "mic.circle.fill"
         case .transcribeAudio: return "waveform.circle.fill"
         case .history: return "doc.text.fill"
         case .models: return "brain.head.profile"
@@ -169,8 +167,8 @@ struct ContentView: View {
     
     private var isSetupComplete: Bool {
         hasLoadedData &&
-        whisperState.currentModel != nil &&
-        KeyboardShortcuts.getShortcut(for: .toggleMiniRecorder) != nil &&
+        whisperState.currentTranscriptionModel != nil &&
+        hotkeyManager.selectedHotkey1 != .none &&
         AXIsProcessTrusted() &&
         CGPreflightScreenCaptureAccess()
     }
@@ -190,10 +188,11 @@ struct ContentView: View {
                 .navigationTitle("")
         }
         .navigationSplitViewStyle(.balanced)
-        .frame(minWidth: 1100, minHeight: 750)
-       .background(Color(.controlBackgroundColor))
+        .frame(minWidth: 940, minHeight: 730)
         .onAppear {
             hasLoadedData = true
+            // Initialize hotkey monitoring after the app is ready
+            hotkeyManager.startHotkeyMonitoring()
         }
         .onReceive(NotificationCenter.default.publisher(for: .navigateToDestination)) { notification in
             print("ContentView: Received navigation notification")
@@ -236,13 +235,12 @@ struct ContentView: View {
                 MetricsView(skipSetupCheck: true)
             } else {
                 MetricsSetupView()
+                    .environmentObject(hotkeyManager)
             }
         case .models:
             ModelManagementView(whisperState: whisperState)
         case .enhancement:
             EnhancementSettingsView()
-        case .record:
-            RecordView()
         case .transcribeAudio:
             AudioTranscribeView()
         case .history:

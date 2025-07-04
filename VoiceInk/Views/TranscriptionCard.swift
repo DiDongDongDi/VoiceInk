@@ -21,7 +21,7 @@ struct TranscriptionCard: View {
             VStack(alignment: .leading, spacing: 8) {
                 // Header with date and duration
                 HStack {
-                    Text(transcription.timestamp, style: .date)
+                    Text(transcription.timestamp, format: .dateTime.month(.abbreviated).day().year().hour().minute())
                         .font(.system(size: 14, weight: .medium, design: .default))
                         .foregroundColor(.secondary)
                     Spacer()
@@ -85,24 +85,10 @@ struct TranscriptionCard: View {
                         .padding(.vertical, 8)
                     AudioPlayerView(url: url)
                 }
-                
-                // Timestamp (only when expanded)
-                if isExpanded {
-                    HStack {
-                        Text(transcription.timestamp, style: .time)
-                            .font(.system(size: 14, weight: .regular, design: .default))
-                            .foregroundColor(.secondary)
-                        Spacer()
-                    }
-                    .padding(.top, 4)
-                }
             }
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.windowBackgroundColor).opacity(0.4))
-        )
+        .background(CardBackground(isSelected: false))
         .cornerRadius(12)
         .shadow(color: Color.black.opacity(0.05), radius: 3, x: 0, y: 2)
         .contextMenu {
